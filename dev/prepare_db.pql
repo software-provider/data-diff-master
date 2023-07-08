@@ -1,0 +1,170 @@
+// This is a Preql file, used for setting up a database for development and testing
+//
+// In loads a "rating" dataset and generates a set of tables from it, with various modifications.
+
+// Declare table & functions
+func run_sql(code) {
+    print code
+    force_eval( SQL( nulltype, code ))
+}
+
+func drop_table(t) {
+    run_sql("DROP TABLE IF EXISTS " + get_qualified_name(t))
+}
+
+func create_indices(tbl) {
+    tbl.add_index("id", true)
+    tbl.add_index("timestamp")
+    tbl.add_index(["id", "timestamp"])
+}
+
+DATASET = "data_diff"   // For BigQuery
+if (db_type == "bigquery") {
+    set_active_dataset(DATASET)
+}
+
+// Cleanup
+func cleanup() {
+    drop_table("rating")
+    drop_table("tmp_rating")
+    drop_table("rating_del1")
+    drop_table("rating_update1")
+    drop_table("rating_update001p")
+    drop_table("rating_update1p")
+    drop_table("rating_del1p")
+    drop_table("rating_update50p")
+    commit()
+}
+
+cleanup()
+
+// Import CSV
+if (db_type == "snowflake" or db_type == "redshift") {
+    if (db_type == "snowflake") {
+        print "Uploading ratings CSV"
+
+        run_sql("RM @~/ratings.csv.gz")
+        run_sql("PUT file://dev/ratings.csv @~")
+
+        print "Loading ratings CSV"
+
+        bare table tmp_rating {
+            userid: int
+            movieid: int
+            rating: float
+            timestamp: int
+        }
+
+        run_sql("COPY INTO tmp_rating FROM '@~/ratings.csv.gz' file_format=(skip_header=1)")
+
+    } else if (db_type == "redshift") {
+        // NOTE: Requires that the csv already exists on s3 in the given path
+        print "Loading ratings CSV (already uploaded)"
+
+        table tmp_rating {
+            userid: int
+            movieid: int
+            rating: float
+            timestamp: int
+        }
+
+        run_sql("""
+            COPY "public"."tmp_rating" (userid, movieid, rating, timestamp)
+            FROM 's3://dev-cf-redshift-datafold-data-diff/ml/ratings.csv'
+            IAM_ROLE 'arn:aws:iam::760878568205:role/dev-cf-redshift-data-diff'
+            DELIMITER ','
+            IGNOREHEADER 1;
+            """)
+
+    }
+
+    table rating {
+        id: int     // explicit id, instead of identity type
+        userid: int
+        movieid: int
+        rating: float
+        timestamp: int
+    }
+
+    run_sql("""
+        INSERT INTO rating(id, userid, movieid, rating, timestamp)
+        SELECT row_number() over (order by userid, movieid, timestamp) AS id, userid, movieid, rating, timestamp
+        FROM tmp_rating
+    """)
+
+} else if (db_type == "mssql") {
+    run_sql("drop table if exists tmp_rating")
+    run_sql("create table tmp_rating(userid int, movieid int, rating float, timestamp int)")
+    table tmp_rating {...}
+    print "Loading ratings CSV"
+    run_sql("BULK INSERT tmp_rating from 'dev/ratings.csv' with (fieldterminator = ',', rowterminator = '0x0a', FIRSTROW = 2);")
+    print "Populating actual table"
+    rating += tmp_rating
+    commit()
+} else if (db_type == "bigquery") {
+    print "Importing the CSV through the Python script (BigQuery)"
+    PY("0", "import _bq_import_csv")
+
+    table rating {
+        id: int     // explicit id, to avoid identity type
+        userid: int
+        movieid: int
+        rating: float
+        timestamp: int
+    }
+
+    run_sql("""
+        INSERT INTO data_diff.rating(id, userid, movieid, rating, timestamp)
+        SELECT row_number() over (order by userid, movieid, timestamp) AS id, userid, movieid, rating, timestamp FROM data_diff.tmp_rating
+    """)
+
+} else {
+    print "Importing ratings CSV"
+
+    table rating {
+        userid: int
+        movieid: int
+        rating: float
+        timestamp: int
+    }
+    import_csv(rating, 'dev/ratings.csv', true)
+    create_indices(rating)
+}
+
+drop_table("tmp_rating")
+commit()
+
+middle = count(rating) /~ 2
+
+// Code notes:
+// - We use 'const table' to avoid updating the ids
+
+print "Create tables"
+const table rating_del1 = rating
+const table rating_update1 = rating
+const table rating_update001p = rating
+const table rating_update1p = rating
+const table rating_del1p = rating
+const table rating_update50p = rating
+
+print "Create indexes"
+
+create_indices(rating_del1)
+create_indices(rating_update1)
+create_indices(rating_update001p)
+create_indices(rating_update1p)
+create_indices(rating_del1p)
+create_indices(rating_update50p)
+commit()
+
+print "Alter tables"
+rating_del1[middle..(middle+1)] delete [true]
+assert count(rating) == count(rating_del1) + 1
+rating_update1[middle..(middle+1)] update {timestamp: timestamp + 1}
+
+rating_update001p[random() < 0.0001] update {timestamp: timestamp + 1}
+rating_update1p[random() < 0.01] update {timestamp: timestamp + 1}
+rating_update50p[random() < 0.5] update {timestamp: timestamp + 1}
+rating_del1p[random() < 0.01] delete [true]
+
+commit()
