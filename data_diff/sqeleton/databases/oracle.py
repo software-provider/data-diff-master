@@ -184,7 +184,7 @@ class Oracle(ThreadedDatabase):
         try:
             c = self._oracle.connect(**self.kwargs)
             if SESSION_TIME_ZONE:
-                c.cursor().execute(f"ALTER SESSION SET TIME_ZONE = '{SESSION_TIME_ZONE}'")
+                c.cursor().execute(f"ALTER SESSION SET TIME_ZONE = ?", (SESSION_TIME_ZONE, ))
             return c
         except Exception as e:
             raise ConnectError(*e.args) from e
