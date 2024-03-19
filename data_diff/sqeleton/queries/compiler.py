@@ -1,4 +1,3 @@
-import random
 from datetime import datetime
 from typing import Any, Dict, Sequence, List
 
@@ -8,6 +7,7 @@ from ..utils import ArithString
 from ..abcs import AbstractDatabase, AbstractDialect, DbPath, AbstractCompiler, Compilable
 
 import contextvars
+import secrets
 
 cv_params = contextvars.ContextVar("params")
 
@@ -76,7 +76,7 @@ class Compiler(AbstractCompiler):
 
     def new_unique_table_name(self, prefix="tmp") -> DbPath:
         self._counter[0] += 1
-        return self.database.parse_table_name(f"{prefix}{self._counter[0]}_{'%x'%random.randrange(2**32)}")
+        return self.database.parse_table_name(f"{prefix}{self._counter[0]}_{'%x'%secrets.SystemRandom().randrange(2**32)}")
 
     def add_table_context(self, *tables: Sequence, **kw):
         return self.replace(_table_context=self._table_context + list(tables), **kw)

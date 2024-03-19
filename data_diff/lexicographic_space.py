@@ -17,10 +17,9 @@ for working with a restricted space, which will reduce the likelihood of gaps in
 keys are not evenly distributed.
 """
 
-from random import randint, randrange
-
 from typing import Tuple
 from .utils import safezip
+import secrets
 
 Vector = Tuple[int]
 Interval = Tuple[int]
@@ -53,7 +52,7 @@ def rand_v_in_range(v1: Vector, v2: Vector):
 def irandrange(start, stop):
     if start == stop:
         return start
-    return randrange(start, stop)
+    return secrets.SystemRandom().randrange(start, stop)
 
 
 class LexicographicSpace:
@@ -213,8 +212,8 @@ def test_lex_space():
     MAX_BISECTION = 128
 
     for n in range(1, MAX_COLUMNS):
-        min_bound = tuple(randint(0, MAX_DIM) for i in range(n))
-        size = tuple(randint(1, MAX_DIM) for i in range(n))
+        min_bound = tuple(secrets.SystemRandom().randint(0, MAX_DIM) for i in range(n))
+        size = tuple(secrets.SystemRandom().randint(1, MAX_DIM) for i in range(n))
         max_bound = add_v(min_bound, size)
 
         sp = BoundedLexicographicSpace(min_bound, max_bound)
